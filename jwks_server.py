@@ -49,14 +49,14 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         return value + "=" * (-len(value) % 4)
 
     def decode_token(self, token):
-        head_b64, payl_b64 = token.split(".", 3)
+        head_b64, payl_b64, sig = token.split(".", 3) # pylint: disable=W0612
         head = base64.urlsafe_b64decode(self.base64_padding(head_b64))
         payl = base64.urlsafe_b64decode(self.base64_padding(payl_b64))
         head_dict = json.loads(head, object_pairs_hook=OrderedDict)
         payl_dict = json.loads(payl, object_pairs_hook=OrderedDict)
         return head_dict, payl_dict
 
-    def do_GET(self):
+    def do_GET(self): # pylint: disable=C0103
         logging.info("GET: %s", str(self.path))
         parts = self.path.strip('/').split('/')
 
@@ -78,7 +78,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
 
         self.reply(resp)
 
-    def do_POST(self):
+    def do_POST(self): # pylint: disable=C0103
         logging.info("POST %s", str(self.path))
 
         content_length = int(self.headers['Content-Length'])
@@ -96,7 +96,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         token.make_signed_token(key)
         self.reply(token.serialize())
 
-    def do_DELETE(self):
+    def do_DELETE(self): # pylint: disable=C0103
         logging.info("DELETE %s", str(self.path))
         parts = self.path.strip('/').split('/')
         if len(parts) == 2:
