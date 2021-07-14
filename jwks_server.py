@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+'''Lightweight JWKS server'''
 
 import argparse
 import base64
@@ -12,66 +13,76 @@ DEFAULT_PORT = 8080
 
 keys = {}
 
+def get_key(key_name, alg):
+    '''
+    Returns key from keys dictionary accoding key_name
+    If key_name key does not exist in the keys dictionary creates according alg
+    '''
+    if key_name not in keys:
+        keys[key_name] = {
+            'RS256': jwk.JWK.generate(kty='RSA', size=1024),
+            'RS384': jwk.JWK.generate(kty='RSA', size=2048),
+            'RS512': jwk.JWK.generate(kty='RSA', size=4048),
+            'ES256': jwk.JWK.generate(kty='EC', crv='P-256'),
+            'ES384': jwk.JWK.generate(kty='EC', crv='P-384'),
+            'ES512': jwk.JWK.generate(kty='EC', crv='P-521'),
+            'HS256': jwk.JWK.generate(kty='oct', size=256),
+            'HS384': jwk.JWK.generate(kty='oct', size=384),
+            'HS512': jwk.JWK.generate(kty='oct', size=512)
+        }.get(alg, None)
+    return keys[key_name]
+
+def export_key_with_kid(key):
+    '''Returns key as dictionary with kid'''
+    try:
+        key_json = key.export(private_key=False)
+    except jwk.InvalidJWKType:
+        key_json = key.export()
+    key_dict = json.loads(key_json, object_pairs_hook=OrderedDict)
+    key_dict['kid'] = key.thumbprint()
+    return key_dict
+
+def base64_padding(value):
+    '''Completing base64 '=' padding if needed'''
+    return value + "=" * (-len(value) % 4)
+
+def decode_token(token):
+    '''Returns header and body part of JWT token as objects'''
+    head_b64, payl_b64, sig = token.split(".", 3) # pylint: disable=W0612
+    head = base64.urlsafe_b64decode(base64_padding(head_b64))
+    payl = base64.urlsafe_b64decode(base64_padding(payl_b64))
+    head_dict = json.loads(head, object_pairs_hook=OrderedDict)
+    payl_dict = json.loads(payl, object_pairs_hook=OrderedDict)
+    return head_dict, payl_dict
+
 
 class JWKSRequestHandler(BaseHTTPRequestHandler):
+    '''Handles http requests'''
 
     def reply(self, response):
+        '''Returns response to a client'''
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
 
-    def get_key(self, key_name, alg):
-        if key_name not in keys:
-            keys[key_name] = {
-                'RS256': jwk.JWK.generate(kty='RSA', size=1024),
-                'RS384': jwk.JWK.generate(kty='RSA', size=2048),
-                'RS512': jwk.JWK.generate(kty='RSA', size=4048),
-                'ES256': jwk.JWK.generate(kty='EC', crv='P-256'),
-                'ES384': jwk.JWK.generate(kty='EC', crv='P-384'),
-                'ES512': jwk.JWK.generate(kty='EC', crv='P-521'),
-                'HS256': jwk.JWK.generate(kty='oct', size=256),
-                'HS384': jwk.JWK.generate(kty='oct', size=384),
-                'HS512': jwk.JWK.generate(kty='oct', size=512)
-            }.get(alg, None)
-        return keys[key_name]
-
-    def export_key(self, key):
-        try:
-            key_json = key.export(private_key=False)
-        except jwk.InvalidJWKType:
-            key_json = key.export()
-        key_dict = json.loads(key_json, object_pairs_hook=OrderedDict)
-        key_dict['kid'] = key.thumbprint()
-        return key_dict
-
-    def base64_padding(self, value):
-        return value + "=" * (-len(value) % 4)
-
-    def decode_token(self, token):
-        head_b64, payl_b64, sig = token.split(".", 3) # pylint: disable=W0612
-        head = base64.urlsafe_b64decode(self.base64_padding(head_b64))
-        payl = base64.urlsafe_b64decode(self.base64_padding(payl_b64))
-        head_dict = json.loads(head, object_pairs_hook=OrderedDict)
-        payl_dict = json.loads(payl, object_pairs_hook=OrderedDict)
-        return head_dict, payl_dict
-
     def do_GET(self): # pylint: disable=C0103
+        '''Handles GET requests'''
         logging.info("GET: %s", str(self.path))
         parts = self.path.strip('/').split('/')
 
         if len(parts) == 2:
             key_name, alg = parts[0], parts[1]
-            key = self.get_key(key_name, alg)
+            key = get_key(key_name, alg)
             resp = json.dumps({
                 'keys': [
-                    self.export_key(key)
+                    export_key_with_kid(key)
                 ]
             })
         else:
             key_list = []
             for key in keys.values():
-                key_list.append(self.export_key(key))
+                key_list.append(export_key_with_kid(key))
             resp = json.dumps({
                 'keys': key_list
             })
@@ -79,6 +90,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         self.reply(resp)
 
     def do_POST(self): # pylint: disable=C0103
+        '''Handles POST requests'''
         logging.info("POST %s", str(self.path))
 
         content_length = int(self.headers['Content-Length'])
@@ -86,9 +98,9 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         logging.info("BODY %s", post_data.decode('utf-8'))
 
         key_name, alg = self.path.strip('/').split('/')
-        key = self.get_key(key_name, alg)
+        key = get_key(key_name, alg)
 
-        head, payl = self.decode_token(post_data.decode('utf-8'))
+        head, payl = decode_token(post_data.decode('utf-8'))
         head['alg'] = alg
         head['kid'] = key.thumbprint()
 
@@ -97,6 +109,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         self.reply(token.serialize())
 
     def do_DELETE(self): # pylint: disable=C0103
+        '''Handles DELETE requests'''
         logging.info("DELETE %s", str(self.path))
         parts = self.path.strip('/').split('/')
         if len(parts) == 2:
@@ -107,6 +120,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
 
 
 def run(port, server_class=HTTPServer, handler_class=JWKSRequestHandler):
+    '''Runs http server'''
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
     logging.info('Starting JWKS server...')
