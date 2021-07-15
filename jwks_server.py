@@ -148,6 +148,6 @@ parser.add_argument(
     '--port',
     type=int,
     default=DEFAULT_PORT,
-    help="defines http server port (default: {})".format(DEFAULT_PORT))
+    help=f"defines http server port (default: {DEFAULT_PORT})")
 args = parser.parse_args()
 run(args.port)
