@@ -5,11 +5,13 @@ import argparse
 import base64
 import json
 import logging
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from collections import OrderedDict
 from jwcrypto import jwt, jwk
 
 DEFAULT_PORT = 8080
+JWKS_KEYS_KEY = 'keys'
 
 keys = {}
 
@@ -42,6 +44,23 @@ def export_key_with_kid(key):
     key_dict['kid'] = key.thumbprint()
     return key_dict
 
+def jwks_json_with_single_key(key):
+    '''Creates JWKS json with single key'''
+    return json.dumps({
+        JWKS_KEYS_KEY: [
+            export_key_with_kid(key)
+        ]
+    })
+
+def jwks_json_with_all_keys():
+    '''Creates JWKS json with all keys'''
+    key_list = []
+    for key in keys.values():
+        key_list.append(export_key_with_kid(key))
+    return json.dumps({
+        JWKS_KEYS_KEY: key_list
+    })
+
 def base64_padding(value):
     '''Completing base64 '=' padding if needed'''
     return value + "=" * (-len(value) % 4)
@@ -61,7 +80,7 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
 
     def reply(self, response):
         '''Returns response to a client'''
-        self.send_response(200)
+        self.send_response(HTTPStatus.OK)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write(response.encode('utf-8'))
@@ -72,21 +91,11 @@ class JWKSRequestHandler(BaseHTTPRequestHandler):
         parts = self.path.strip('/').split('/')
 
         if len(parts) == 2:
-            key_name, alg = parts[0], parts[1]
-            key = get_key(key_name, alg)
-            resp = json.dumps({
-                'keys': [
-                    export_key_with_kid(key)
-                ]
-            })
+            resp = jwks_json_with_single_key(
+                get_key(parts[0], parts[1])
+            )
         else:
-            key_list = []
-            for key in keys.values():
-                key_list.append(export_key_with_kid(key))
-            resp = json.dumps({
-                'keys': key_list
-            })
-
+            resp = jwks_json_with_all_keys()
         self.reply(resp)
 
     def do_POST(self): # pylint: disable=C0103
